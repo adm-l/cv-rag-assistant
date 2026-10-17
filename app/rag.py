@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 from pathlib import Path
 from typing import Any
 
 import chromadb
 import httpx
+from docx import Document
 from pypdf import PdfReader
 
-SUPPORTED_SUFFIXES = {".pdf", ".txt", ".md"}
+SUPPORTED_SUFFIXES = {".pdf", ".txt", ".md", ".docx"}
 
 
 class RAGError(RuntimeError):
@@ -19,9 +21,8 @@ class RAGError(RuntimeError):
 def extract_pages(filename: str, content: bytes) -> list[dict[str, Any]]:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
-        raise RAGError("Unsupported file type. Upload a PDF, TXT, or Markdown file.")
+        raise RAGError("Unsupported file type. Use PDF, DOCX, TXT, or Markdown.")
     if suffix == ".pdf":
-        import io
         try:
             reader = PdfReader(io.BytesIO(content))
             pages = [
@@ -31,11 +32,24 @@ def extract_pages(filename: str, content: bytes) -> list[dict[str, Any]]:
         except Exception as exc:
             raise RAGError("Could not read this PDF. If it is scanned, OCR it first.") from exc
         if not any(p["text"] for p in pages):
-            raise RAGError("No selectable text found in PDF. OCR scanned documents before uploading.")
+            raise RAGError("No selectable text found in PDF. OCR scanned documents before indexing.")
         return pages
-    text = content.decode("utf-8-sig", errors="replace").strip()
+    if suffix == ".docx":
+        try:
+            document = Document(io.BytesIO(content))
+            parts = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+            for table in document.tables:
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            text = "\n".join(parts).strip()
+        except Exception as exc:
+            raise RAGError("Could not read this Word document. Ensure it is a valid .docx file.") from exc
+    else:
+        text = content.decode("utf-8-sig", errors="replace").strip()
     if not text:
-        raise RAGError("The uploaded document is empty.")
+        raise RAGError("The uploaded document is empty or contains no extractable text.")
     return [{"text": text, "page": None}]
 
 
@@ -110,7 +124,7 @@ class CVRAG:
         self.chunk_overlap = chunk_overlap
         self.top_k = top_k
 
-    def ingest(self, filename: str, content: bytes) -> dict[str, Any]:
+    def ingest(self, filename: str, content: bytes, replace_existing: bool = True) -> dict[str, Any]:
         pages = extract_pages(filename, content)
         records = []
         for page in pages:
@@ -118,10 +132,12 @@ class CVRAG:
                 records.append({"text": chunk, "page": page["page"], "chunk_index": index})
         if not records:
             raise RAGError("No text chunks could be created from this document.")
-        self.collection.delete(where={"document_type": "cv"})
+        # Embed first so a transient embedding error does not erase the current index.
         vectors = self.ollama.embed([r["text"] for r in records])
         digest = hashlib.sha256(content).hexdigest()[:16]
         ids = [f"cv-{digest}-{i}" for i in range(len(records))]
+        if replace_existing:
+            self.collection.delete(where={"document_type": "cv"})
         metadatas = [{"source": Path(filename).name,
                       "page": r["page"] if r["page"] is not None else 0,
                       "chunk_index": r["chunk_index"], "document_type": "cv"} for r in records]
@@ -134,7 +150,7 @@ class CVRAG:
         if not question:
             raise RAGError("Question must not be empty.")
         if self.collection.count() == 0:
-            raise RAGError("No CV has been indexed. Upload your CV first.")
+            raise RAGError("No CV has been indexed. Add a document to the configured folder or upload your CV.")
         query_vector = self.ollama.embed([question])[0]
         result = self.collection.query(query_embeddings=[query_vector],
             n_results=min(self.top_k, self.collection.count()),
