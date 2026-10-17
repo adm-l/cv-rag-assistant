@@ -2,6 +2,11 @@
 
 A local, CV-grounded question-answering API built with FastAPI, Ollama, and ChromaDB. Your documents are indexed on your machine; the app does not require a hosted LLM API key.
 
+## Documentation
+
+- [Architecture and request lifecycle](docs/ARCHITECTURE.md) — components, ingestion and question-answering flows, model selection, persistence and limitations.
+- [Installation, running and troubleshooting](docs/INSTALLATION.md) — macOS/Docker setup, model downloads, API tests, dynamic CV updates and operations.
+
 ## Architecture
 
 1. Put your CV or related documents in the local `documents/` folder.
