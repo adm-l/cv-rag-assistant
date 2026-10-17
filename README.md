@@ -120,7 +120,7 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-Tests use a fake Ollama client and do not download models. They cover document extraction (including DOCX), chunk validation, ingestion, retrieval, and the empty-index path.
+Tests use a fake Ollama client and do not download models. They cover document extraction (including DOCX), folder fingerprint changes after edits/removals, chunk validation, ingestion, retrieval, and the empty-index path.
 
 ## API
 
