@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pytest
+from docx import Document
 
 from app.rag import CVRAG, RAGError, chunk_text, extract_pages
 
@@ -25,9 +28,23 @@ def test_extract_text_file():
     assert pages == [{"text": "Go backend engineer", "page": None}]
 
 
+def test_extract_docx_text_and_table():
+    document = Document()
+    document.add_paragraph("Go backend engineer")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "PostgreSQL"
+    table.cell(0, 1).text = "Kafka"
+    buffer = BytesIO()
+    document.save(buffer)
+
+    pages = extract_pages("cv.docx", buffer.getvalue())
+    assert "Go backend engineer" in pages[0]["text"]
+    assert "PostgreSQL | Kafka" in pages[0]["text"]
+
+
 def test_reject_unsupported_file():
     with pytest.raises(RAGError):
-        extract_pages("cv.docx", b"not parsed")
+        extract_pages("cv.rtf", b"not parsed")
 
 
 class FakeOllama:
@@ -52,5 +69,5 @@ def test_ingest_and_ask(tmp_path):
 def test_ask_without_cv_fails(tmp_path):
     rag = CVRAG(chroma_path=str(tmp_path / "empty"), collection_name="empty_cv",
                 ollama=FakeOllama())
-    with pytest.raises(RAGError, match="Upload your CV"):
+    with pytest.raises(RAGError, match="No CV has been indexed"):
         rag.ask("What skills do I have?")
